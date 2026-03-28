@@ -13,6 +13,8 @@ import { ExchangeAdapter } from "../arbitrage/arbitrage.types";
 import { BinanceAdapter, BingXAdapter, BybitAdapter, MexcAdapter, OkxAdapter } from "../adapters";
 import { Transactions } from "../transactions/transaction.service";
 import { Config, UserPreferences } from "../config/config.model";
+import { PaperTradingEngine } from "../paper/PaperTradingEngine";
+import { DirectArbitrageStrategy, DirectArbConfig } from "../strategy/implementations/DirectArbitrageStrategy";
 
 export class TelegramController {
   private service: TelegramService;
@@ -23,6 +25,7 @@ export class TelegramController {
   private directArbAlerts: DirectArbitrageAlerts;
   private allExchanges: Record<string, ExchangeAdapter>;
   private transactions: Transactions;
+  private paperEngine: PaperTradingEngine | null = null;
   
 
 
@@ -67,7 +70,11 @@ export class TelegramController {
       { command: 'config', description: 'Configure your bot settings' },
       { command: 'triangular_alerts', description: 'Get triangular arbitrage alerts' },
       { command: 'direct_alerts', description: 'Get direct arbitrage alerts' },
-      {command: 'transaction_history', description:'Get transaction history.'}
+      { command: 'transaction_history', description: 'Get transaction history.' },
+      { command: 'paper_start', description: 'Start paper trading simulation' },
+      { command: 'paper_stop', description: 'Stop paper trading' },
+      { command: 'paper_status', description: 'Paper trading P&L and balances' },
+      { command: 'paper_reset', description: 'Reset paper trading balances' },
     ]
   }); 
   console.log(`Telegram commands set successfully.`);
@@ -114,7 +121,21 @@ export class TelegramController {
       if(messageText === "/transaction_history"){
         await this.directArbAlerts.transactionHistory(chatId)
       }
-   
+
+      // ─── Paper Trading Commands ───
+      if(messageText === "/paper_start"){
+        await this.handlePaperStart(chatId);
+      }
+      if(messageText === "/paper_stop"){
+        await this.handlePaperStop(chatId);
+      }
+      if(messageText === "/paper_status"){
+        await this.handlePaperStatus(chatId);
+      }
+      if(messageText === "/paper_reset"){
+        await this.handlePaperReset(chatId);
+      }
+
       } catch (error) {
         console.error(`[Telegram Controller] Error occured while initialising messageText commands: ${error}`);
       }
@@ -449,5 +470,118 @@ export class TelegramController {
       }  
     }
   )
+  }
+
+  // ─── Paper Trading Handlers ────────────────────────────────
+
+  private async handlePaperStart(chatId: number) {
+    try {
+      if (this.paperEngine) {
+        await this.bot.sendMessage({ chat_id: chatId, text: "Paper trading is already running. Use /paper_stop first." });
+        return;
+      }
+
+      // Create paper engine with $10K virtual capital per exchange
+      const initialCapital: Record<string, Record<string, number>> = {};
+      for (const name of Object.keys(this.allExchanges)) {
+        initialCapital[name] = { USDT: 10000 };
+      }
+
+      this.paperEngine = new PaperTradingEngine(this.allExchanges, { initialCapital });
+
+      // Create a direct arb strategy using paper adapters
+      const user = await UserPreferences.findOne();
+      const selectedSymbols = user?.selectedSymbols || ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+      const selectedExchangeNames = user?.selectedExchanges || Object.keys(this.allExchanges);
+      const config = await Config.findOne();
+
+      const paperAdapters = this.paperEngine.getAllAdapters();
+      const exchanges = selectedExchangeNames
+        .map(name => paperAdapters[name])
+        .filter(Boolean) as any[];
+
+      const strategy = new DirectArbitrageStrategy("paper_direct");
+      await strategy.initialize({
+        exchanges,
+        symbols: selectedSymbols,
+        tradeSize: config?.directArbSize || 0.5,
+        profitThreshold: config?.profitThreshold || 0.5,
+      });
+
+      // Start scanning
+      this.paperEngine.startStrategy(strategy, 2000);
+
+      await this.bot.sendMessage({
+        chat_id: chatId,
+        text: `📊 *Paper Trading Started\\!*\n\n💰 Virtual Capital: \\$10,000 per exchange\n🔄 Scanning every 2 seconds\n📈 Strategy: Direct Arbitrage\n\nUse /paper\\_status to check P\\&L\nUse /paper\\_stop to stop`,
+        parse_mode: "MarkdownV2",
+      });
+    } catch (error) {
+      console.error(`[Telegram Controller] Paper start error:`, error);
+      await this.bot.sendMessage({ chat_id: chatId, text: "Error starting paper trading." });
+    }
+  }
+
+  private async handlePaperStop(chatId: number) {
+    if (!this.paperEngine) {
+      await this.bot.sendMessage({ chat_id: chatId, text: "Paper trading is not running." });
+      return;
+    }
+
+    this.paperEngine.stop();
+    await this.paperEngine.savePerformanceSnapshot();
+
+    const results = this.paperEngine.getResults();
+    const pnlEmoji = results.totalPnL >= 0 ? "📈" : "📉";
+
+    await this.bot.sendMessage({
+      chat_id: chatId,
+      text: `🛑 *Paper Trading Stopped*\n\n${pnlEmoji} Total P&L: $${results.totalPnL.toFixed(4)}\n📊 Trades: ${results.totalTrades}\n✅ Win Rate: ${(results.winRate * 100).toFixed(1)}%`,
+      parse_mode: "Markdown",
+    });
+
+    this.paperEngine = null;
+  }
+
+  private async handlePaperStatus(chatId: number) {
+    if (!this.paperEngine) {
+      await this.bot.sendMessage({ chat_id: chatId, text: "Paper trading is not running. Use /paper_start" });
+      return;
+    }
+
+    const results = this.paperEngine.getResults();
+    const balances = results.balances;
+    const pnlEmoji = results.totalPnL >= 0 ? "📈" : "📉";
+
+    let balanceText = "";
+    for (const [exchange, assets] of Object.entries(balances)) {
+      const usdtBal = assets["USDT"] || 0;
+      balanceText += `  ${exchange}: $${usdtBal.toFixed(2)} USDT\n`;
+    }
+
+    // Show last 5 trades
+    const recentTrades = results.trades.slice(-5).map((t, i) => {
+      const icon = t.profit > 0 ? "✅" : "❌";
+      return `  ${icon} $${t.profit.toFixed(4)} | ${t.legs.map(l => l.exchange).join("→")}`;
+    }).join("\n");
+
+    await this.bot.sendMessage({
+      chat_id: chatId,
+      text: `📊 *Paper Trading Status*\n\n${pnlEmoji} Total P&L: $${results.totalPnL.toFixed(4)}\n📊 Total Trades: ${results.totalTrades}\n✅ Win Rate: ${(results.winRate * 100).toFixed(1)}%\n\n💰 *Balances:*\n${balanceText}\n📝 *Recent Trades:*\n${recentTrades || "  No trades yet"}`,
+      parse_mode: "Markdown",
+    });
+  }
+
+  private async handlePaperReset(chatId: number) {
+    if (this.paperEngine) {
+      this.paperEngine.stop();
+      await this.paperEngine.reset();
+      this.paperEngine = null;
+    }
+
+    await this.bot.sendMessage({
+      chat_id: chatId,
+      text: "🔄 Paper trading reset. Virtual balances restored to initial capital.\nUse /paper_start to begin again.",
+    });
   }
 }

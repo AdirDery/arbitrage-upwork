@@ -60,6 +60,11 @@ const transactionSchema = new mongoose.Schema({
     exchange:{
         type:String
     },
+    mode:{
+        type:String,
+        enum:['live','paper'],
+        default:'live'
+    },
     timestamp:{
         type:Date,
         default:Date.now
