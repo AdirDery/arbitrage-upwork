@@ -16,6 +16,8 @@ import { Config, UserPreferences } from "../config/config.model";
 import { PaperTradingEngine } from "../paper/PaperTradingEngine";
 import { DirectArbitrageStrategy, DirectArbConfig } from "../strategy/implementations/DirectArbitrageStrategy";
 import { EvolutionEngine } from "../evolution/EvolutionEngine";
+import { ClaudeAnalysis } from "../ai/ClaudeAnalysis";
+import { marketRegimeDetector } from "../ai/MarketRegimeDetector";
 
 export class TelegramController {
   private service: TelegramService;
@@ -28,6 +30,7 @@ export class TelegramController {
   private transactions: Transactions;
   private paperEngine: PaperTradingEngine | null = null;
   private evolutionEngine: EvolutionEngine | null = null;
+  private claudeAnalysis: ClaudeAnalysis;
   
 
 
@@ -48,6 +51,7 @@ export class TelegramController {
       this.directArbAlerts.showAlerts.bind(this.directArbAlerts),
       this.directArbAlerts.ShowAlertsWithAutoTrades.bind(this.directArbAlerts)
     )
+    this.claudeAnalysis = new ClaudeAnalysis();
     this.registerHandlers();
     // this.allExchanges = {
     //   Binance: new BinanceAdapter(),
@@ -80,6 +84,8 @@ export class TelegramController {
       { command: 'evo_start', description: 'Start multi-brain evolution' },
       { command: 'evo_stop', description: 'Stop evolution and show results' },
       { command: 'evo_status', description: 'Evolution status and top brains' },
+      { command: 'ai_report', description: 'AI daily analysis report' },
+      { command: 'ai_regime', description: 'Current market regime' },
     ]
   }); 
   console.log(`Telegram commands set successfully.`);
@@ -150,6 +156,14 @@ export class TelegramController {
       }
       if(messageText === "/evo_status"){
         await this.handleEvoStatus(chatId);
+      }
+
+      // ─── AI Commands ───
+      if(messageText === "/ai_report"){
+        await this.handleAiReport(chatId);
+      }
+      if(messageText === "/ai_regime"){
+        await this.handleAiRegime(chatId);
       }
 
       } catch (error) {
@@ -695,5 +709,63 @@ export class TelegramController {
     }
 
     await this.bot.sendMessage({ chat_id: chatId, text: msg, parse_mode: "Markdown" });
+  }
+
+  // ─── AI Handlers ───────────────────────────────────────────
+
+  private async handleAiReport(chatId: number) {
+    await this.bot.sendMessage({ chat_id: chatId, text: "🤖 Generating AI analysis report..." });
+
+    try {
+      const report = await this.claudeAnalysis.generateDailyReport();
+
+      // Split long messages (Telegram limit: 4096 chars)
+      const chunks = this.splitMessage(report, 4000);
+      for (const chunk of chunks) {
+        await this.bot.sendMessage({ chat_id: chatId, text: `🤖 *AI Analysis*\n\n${chunk}`, parse_mode: "Markdown" });
+      }
+    } catch (error) {
+      await this.bot.sendMessage({ chat_id: chatId, text: "Error generating AI report. Check CLAUDE_API_KEY in .env" });
+    }
+  }
+
+  private async handleAiRegime(chatId: number) {
+    // Record latest snapshot
+    marketRegimeDetector.recordSnapshot();
+
+    const analysis = marketRegimeDetector.detectRegime();
+    const modifiers = marketRegimeDetector.getParameterModifiers(analysis.regime);
+
+    const regimeEmoji: Record<string, string> = {
+      calm: "😌", volatile: "⚡", trending: "📈", choppy: "🌊"
+    };
+
+    const msg = `${regimeEmoji[analysis.regime] || "📊"} *Market Regime: ${analysis.regime.toUpperCase()}*
+
+📊 Confidence: ${(analysis.confidence * 100).toFixed(0)}%
+📉 Volatility: ${analysis.volatility.toFixed(1)}% (annualized)
+📏 Avg Spread: ${analysis.spreadMean.toFixed(4)}%
+📐 Spread StdDev: ${analysis.spreadStdDev.toFixed(4)}%
+
+💡 *Recommendation:*
+${analysis.recommendation}
+
+⚙️ *Parameter Adjustments:*
+  Profit Threshold: x${modifiers.profitThresholdMultiplier}
+  Trade Size: x${modifiers.tradeSizeMultiplier}
+  Scan Speed: x${modifiers.scanIntervalMultiplier}`;
+
+    await this.bot.sendMessage({ chat_id: chatId, text: msg, parse_mode: "Markdown" });
+  }
+
+  private splitMessage(text: string, maxLength: number): string[] {
+    if (text.length <= maxLength) return [text];
+    const chunks: string[] = [];
+    let remaining = text;
+    while (remaining.length > 0) {
+      chunks.push(remaining.slice(0, maxLength));
+      remaining = remaining.slice(maxLength);
+    }
+    return chunks;
   }
 }
