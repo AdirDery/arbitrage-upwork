@@ -15,6 +15,7 @@ import { Transactions } from "../transactions/transaction.service";
 import { Config, UserPreferences } from "../config/config.model";
 import { PaperTradingEngine } from "../paper/PaperTradingEngine";
 import { DirectArbitrageStrategy, DirectArbConfig } from "../strategy/implementations/DirectArbitrageStrategy";
+import { EvolutionEngine } from "../evolution/EvolutionEngine";
 
 export class TelegramController {
   private service: TelegramService;
@@ -26,6 +27,7 @@ export class TelegramController {
   private allExchanges: Record<string, ExchangeAdapter>;
   private transactions: Transactions;
   private paperEngine: PaperTradingEngine | null = null;
+  private evolutionEngine: EvolutionEngine | null = null;
   
 
 
@@ -75,6 +77,9 @@ export class TelegramController {
       { command: 'paper_stop', description: 'Stop paper trading' },
       { command: 'paper_status', description: 'Paper trading P&L and balances' },
       { command: 'paper_reset', description: 'Reset paper trading balances' },
+      { command: 'evo_start', description: 'Start multi-brain evolution' },
+      { command: 'evo_stop', description: 'Stop evolution and show results' },
+      { command: 'evo_status', description: 'Evolution status and top brains' },
     ]
   }); 
   console.log(`Telegram commands set successfully.`);
@@ -134,6 +139,17 @@ export class TelegramController {
       }
       if(messageText === "/paper_reset"){
         await this.handlePaperReset(chatId);
+      }
+
+      // ─── Evolution Commands ───
+      if(messageText === "/evo_start"){
+        await this.handleEvoStart(chatId);
+      }
+      if(messageText === "/evo_stop"){
+        await this.handleEvoStop(chatId);
+      }
+      if(messageText === "/evo_status"){
+        await this.handleEvoStatus(chatId);
       }
 
       } catch (error) {
@@ -583,5 +599,101 @@ export class TelegramController {
       chat_id: chatId,
       text: "🔄 Paper trading reset. Virtual balances restored to initial capital.\nUse /paper_start to begin again.",
     });
+  }
+
+  // ─── Evolution Handlers ────────────────────────────────────
+
+  private async handleEvoStart(chatId: number) {
+    try {
+      if (this.evolutionEngine) {
+        await this.bot.sendMessage({ chat_id: chatId, text: "Evolution is already running. Use /evo_stop first." });
+        return;
+      }
+
+      const user = await UserPreferences.findOne();
+      const symbols = user?.selectedSymbols || ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+
+      this.evolutionEngine = new EvolutionEngine(this.allExchanges, symbols);
+      await this.evolutionEngine.start({
+        populationSize: 10,
+        eliteCount: 2,
+        mutationRate: 0.2,
+        crossoverRate: 0.7,
+        tournamentSize: 3,
+        strategyType: "direct",
+      });
+
+      await this.bot.sendMessage({
+        chat_id: chatId,
+        text: `🧬 *Evolution Engine Started\\!*\n\n🧠 Population: 10 brains\n📊 Strategy: Direct Arbitrage\n⏱ Eval Period: 24 hours\n🏆 Elite: Top 2 survive each generation\n🔀 Mutation Rate: 20%\n\nUse /evo\\_status to monitor\nUse /evo\\_stop to stop`,
+        parse_mode: "MarkdownV2",
+      });
+    } catch (error) {
+      console.error(`[Telegram Controller] Evolution start error:`, error);
+      await this.bot.sendMessage({ chat_id: chatId, text: "Error starting evolution engine." });
+    }
+  }
+
+  private async handleEvoStop(chatId: number) {
+    if (!this.evolutionEngine) {
+      await this.bot.sendMessage({ chat_id: chatId, text: "Evolution is not running." });
+      return;
+    }
+
+    const report = await this.evolutionEngine.stop();
+    const best = this.evolutionEngine.getBestBrainChromosome();
+
+    let msg = "🛑 *Evolution Stopped*\n\n";
+
+    if (report) {
+      msg += `📊 Generation: ${report.generation}\n`;
+      msg += `🏆 Best Fitness: ${report.bestFitness.toFixed(4)}\n`;
+      msg += `📈 Avg Fitness: ${report.avgFitness.toFixed(4)}\n\n`;
+
+      msg += `*Top 5 Brains:*\n`;
+      for (const s of report.brainSummaries.slice(0, 5)) {
+        const icon = s.return >= 0 ? "🟢" : "🔴";
+        msg += `${icon} ${s.id.slice(0, 12)}... | Fit: ${s.fitness.toFixed(3)} | $${s.return.toFixed(2)} | ${s.trades} trades\n`;
+      }
+    }
+
+    if (best) {
+      msg += `\n🧬 *Best Brain Config:*\n`;
+      for (const gene of best.chromosome.genes) {
+        msg += `  ${gene.name}: ${gene.value}\n`;
+      }
+    }
+
+    await this.bot.sendMessage({ chat_id: chatId, text: msg, parse_mode: "Markdown" });
+    this.evolutionEngine = null;
+  }
+
+  private async handleEvoStatus(chatId: number) {
+    if (!this.evolutionEngine) {
+      await this.bot.sendMessage({ chat_id: chatId, text: "Evolution is not running. Use /evo_start" });
+      return;
+    }
+
+    const status = this.evolutionEngine.getStatus();
+
+    let msg = `🧬 *Evolution Status*\n\n`;
+    msg += `🔄 Running: ${status.running ? "Yes" : "No"}\n`;
+    msg += `📊 Generation: ${status.generation}\n`;
+    msg += `🧠 Population: ${status.populationSize} brains\n\n`;
+
+    if (status.topBrains.length > 0) {
+      msg += `*Top 5 Brains:*\n`;
+      for (const b of status.topBrains) {
+        msg += `  🧠 ${b.id.slice(0, 15)}... | Fitness: ${b.fitness.toFixed(4)} | Gen: ${b.generation}\n`;
+      }
+    }
+
+    if (status.recentReports.length > 0) {
+      const latest = status.recentReports[status.recentReports.length - 1];
+      msg += `\n*Latest Generation Report:*\n`;
+      msg += `  Best: ${latest.bestFitness.toFixed(4)} | Avg: ${latest.avgFitness.toFixed(4)}\n`;
+    }
+
+    await this.bot.sendMessage({ chat_id: chatId, text: msg, parse_mode: "Markdown" });
   }
 }
