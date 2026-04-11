@@ -8,6 +8,8 @@ import { TelegramBot } from "typescript-telegram-bot-api";
 import { TelegramController } from "./telegram/telegram.controller";
 import { OrderbookManager } from "./orderBooks/orderbookManager";
 import { exchangeSymbols } from "./paths/symbols";
+import { advisorBrain } from "./ai/AdvisorBrain";
+import path from "path";
 
 const {BOT_TOKEN}= process.env;
 
@@ -26,6 +28,40 @@ app.get("/health", (req, res) => {
 // OrderbookManager status endpoint
 app.get("/orderbooks/status", (req, res) => {
   res.json(OrderbookManager.getStatus());
+});
+
+// Serve Mini App static files
+app.use("/app", express.static(path.join(__dirname, "../src/public")));
+
+// Dashboard API for Mini App
+app.get("/api/dashboard", async (req, res) => {
+  try {
+    const trades = await advisorBrain.analyzeTradeHistory(24);
+    const market = advisorBrain.getMarketState();
+    const evo = await advisorBrain.getEvolutionInsights();
+    const recommendations = await advisorBrain.generateRecommendations(24);
+
+    res.json({
+      pnl: trades.pnl,
+      totalTrades: trades.totalTrades,
+      winRate: trades.winRate,
+      bestStrategy: trades.bestStrategy,
+      bestExchangePair: trades.bestExchangePair,
+      worstExchangePair: trades.worstExchangePair,
+      strategyBreakdown: trades.strategyBreakdown,
+      regime: market.regime,
+      volatility: market.volatility,
+      spreadMean: market.spreadMean,
+      correlations: market.correlations,
+      evoGeneration: evo.totalGenerations,
+      evoFitness: evo.bestFitness,
+      evoStrategy: evo.bestStrategy,
+      evoImproving: evo.improving,
+      recommendations: recommendations.slice(0, 5),
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Dashboard data error" });
+  }
 });
 
 app.use(ErrorHandler.handleError);

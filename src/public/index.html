@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Arbitrage Bot Dashboard</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: var(--tg-theme-bg-color, #1a1a2e);
+      --text: var(--tg-theme-text-color, #e0e0e0);
+      --hint: var(--tg-theme-hint-color, #8888aa);
+      --link: var(--tg-theme-link-color, #6c5ce7);
+      --btn: var(--tg-theme-button-color, #6c5ce7);
+      --btn-text: var(--tg-theme-button-text-color, #ffffff);
+      --secondary-bg: var(--tg-theme-secondary-bg-color, #16213e);
+      --accent: #00d2ff;
+      --green: #00e676;
+      --red: #ff5252;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh; padding: 12px; padding-bottom: 80px;
+    }
+    .header { text-align: center; padding: 16px 0; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 16px; }
+    .header h1 { font-size: 20px; font-weight: 700; color: var(--accent); }
+    .header .subtitle { font-size: 12px; color: var(--hint); margin-top: 4px; }
+    .status-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; margin-top: 8px; background: rgba(0,230,118,0.2); color: var(--green); }
+    .card { background: var(--secondary-bg); border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid rgba(255,255,255,0.05); }
+    .card-title { font-size: 13px; color: var(--hint); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+    .metric-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .metric-row:last-child { border-bottom: none; }
+    .metric-label { font-size: 13px; color: var(--hint); }
+    .metric-value { font-size: 15px; font-weight: 600; }
+    .positive { color: var(--green); }
+    .negative { color: var(--red); }
+    .big-number { font-size: 32px; font-weight: 700; text-align: center; padding: 8px 0; }
+    .strategy-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .strategy-chip { background: rgba(255,255,255,0.05); border-radius: 8px; padding: 10px; text-align: center; }
+    .strategy-chip .name { font-size: 11px; color: var(--hint); margin-bottom: 4px; }
+    .strategy-chip .value { font-size: 14px; font-weight: 600; }
+    .exchange-bar { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+    .exchange-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--green); }
+    .exchange-name { font-size: 13px; flex: 1; }
+    .exchange-status { font-size: 11px; color: var(--hint); }
+    .nav-tabs { display: flex; gap: 4px; margin-bottom: 16px; background: var(--secondary-bg); border-radius: 10px; padding: 4px; }
+    .nav-tab { flex: 1; text-align: center; padding: 8px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; color: var(--hint); border: none; background: none; }
+    .nav-tab.active { background: var(--btn); color: var(--btn-text); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .refresh-btn { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--btn); color: var(--btn-text); border: none; border-radius: 24px; padding: 12px 32px; font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 100; }
+    .loading { text-align: center; padding: 40px; color: var(--hint); }
+    .spinner { display: inline-block; width: 24px; height: 24px; border: 3px solid rgba(255,255,255,0.1); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .rec-item { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 13px; }
+    .rec-item:last-child { border-bottom: none; }
+    .rec-num { color: var(--accent); font-weight: 700; margin-right: 6px; }
+    .empty-state { text-align: center; color: var(--hint); padding: 20px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1 id="app-title"></h1>
+    <div class="subtitle" id="app-subtitle"></div>
+    <div class="status-badge" id="status-badge"></div>
+  </div>
+
+  <div class="nav-tabs" id="nav-tabs"></div>
+
+  <div id="tab-overview" class="tab-content active">
+    <div class="card">
+      <div class="card-title" id="portfolio-title"></div>
+      <div id="pnl-display" class="big-number"></div>
+      <div id="overview-metrics"></div>
+    </div>
+    <div class="card">
+      <div class="card-title" id="regime-title"></div>
+      <div id="regime-metrics"></div>
+    </div>
+    <div class="card">
+      <div class="card-title" id="evo-title"></div>
+      <div id="evo-metrics"></div>
+    </div>
+  </div>
+
+  <div id="tab-strategies" class="tab-content">
+    <div class="card">
+      <div class="card-title" id="strat-title"></div>
+      <div id="strategy-grid" class="strategy-grid"></div>
+    </div>
+    <div class="card">
+      <div class="card-title" id="rec-title"></div>
+      <div id="recommendations"></div>
+    </div>
+  </div>
+
+  <div id="tab-exchanges" class="tab-content">
+    <div class="card">
+      <div class="card-title" id="exchange-title"></div>
+      <div id="exchange-list"></div>
+    </div>
+  </div>
+
+  <button class="refresh-btn" id="refresh-btn"></button>
+
+  <script>
+    "use strict";
+
+    var tg = window.Telegram && window.Telegram.WebApp;
+    if (tg) { tg.ready(); tg.expand(); }
+
+    var API_BASE = window.location.origin;
+
+    // Safe DOM helpers — never use innerHTML with dynamic data
+    function el(tag, className, textContent) {
+      var e = document.createElement(tag);
+      if (className) e.className = className;
+      if (textContent !== undefined) e.textContent = textContent;
+      return e;
+    }
+
+    function clearChildren(parent) {
+      while (parent.firstChild) parent.removeChild(parent.firstChild);
+    }
+
+    function metricRow(label, value, colorClass) {
+      var row = el("div", "metric-row");
+      row.appendChild(el("span", "metric-label", label));
+      var val = el("span", "metric-value " + (colorClass || ""), value);
+      row.appendChild(val);
+      return row;
+    }
+
+    // Static text
+    document.getElementById("app-title").textContent = "\u26A1 Arbitrage Bot";
+    document.getElementById("app-subtitle").textContent = "Multi-Exchange Trading System";
+    document.getElementById("status-badge").textContent = "\u25CF ONLINE";
+    document.getElementById("portfolio-title").textContent = "\uD83D\uDCB0 Portfolio";
+    document.getElementById("regime-title").textContent = "\uD83C\uDF0A Market Regime";
+    document.getElementById("evo-title").textContent = "\uD83E\uDDEC Evolution";
+    document.getElementById("strat-title").textContent = "\uD83D\uDCCA Strategy Performance";
+    document.getElementById("rec-title").textContent = "\uD83E\uDDE0 Recommendations";
+    document.getElementById("exchange-title").textContent = "\uD83D\uDD17 Exchange Connections";
+    document.getElementById("refresh-btn").textContent = "\uD83D\uDD04 Refresh";
+
+    // Build nav tabs
+    var tabs = [
+      { id: "overview", label: "Overview" },
+      { id: "strategies", label: "Strategies" },
+      { id: "exchanges", label: "Exchanges" }
+    ];
+    var navContainer = document.getElementById("nav-tabs");
+    tabs.forEach(function(tab, i) {
+      var btn = el("button", "nav-tab" + (i === 0 ? " active" : ""), tab.label);
+      btn.setAttribute("data-tab", tab.id);
+      btn.addEventListener("click", function() { showTab(tab.id); });
+      navContainer.appendChild(btn);
+    });
+
+    function showTab(name) {
+      document.querySelectorAll(".tab-content").forEach(function(t) { t.classList.remove("active"); });
+      document.querySelectorAll(".nav-tab").forEach(function(t) { t.classList.remove("active"); });
+      var content = document.getElementById("tab-" + name);
+      if (content) content.classList.add("active");
+      var tabBtn = document.querySelector('.nav-tab[data-tab="' + name + '"]');
+      if (tabBtn) tabBtn.classList.add("active");
+    }
+
+    function fetchJSON(path, cb) {
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", API_BASE + path);
+      xhr.onload = function() {
+        if (xhr.status === 200) {
+          try { cb(JSON.parse(xhr.responseText)); } catch(e) { cb(null); }
+        } else { cb(null); }
+      };
+      xhr.onerror = function() { cb(null); };
+      xhr.send();
+    }
+
+    var regimeEmoji = { calm: "\uD83D\uDE0C", volatile: "\u26A1", trending: "\uD83D\uDCC8", choppy: "\uD83C\uDF0A" };
+
+    function loadDashboard() {
+      fetchJSON("/api/dashboard", function(data) {
+        if (!data) return;
+
+        // P&L
+        var pnl = data.pnl || 0;
+        var pnlEl = document.getElementById("pnl-display");
+        pnlEl.textContent = (pnl >= 0 ? "+" : "") + "$" + pnl.toFixed(4);
+        pnlEl.className = "big-number " + (pnl >= 0 ? "positive" : "negative");
+
+        // Overview metrics
+        var om = document.getElementById("overview-metrics");
+        clearChildren(om);
+        om.appendChild(metricRow("Total Trades", String(data.totalTrades || 0)));
+        om.appendChild(metricRow("Win Rate", ((data.winRate || 0) * 100).toFixed(0) + "%"));
+        om.appendChild(metricRow("Best Strategy", data.bestStrategy || "\u2014"));
+
+        // Regime
+        var rm = document.getElementById("regime-metrics");
+        clearChildren(rm);
+        var regimeText = (regimeEmoji[data.regime] || "") + " " + (data.regime || "unknown").toUpperCase();
+        rm.appendChild(metricRow("Current Regime", regimeText));
+        rm.appendChild(metricRow("Volatility", (data.volatility || 0).toFixed(1) + "%"));
+        rm.appendChild(metricRow("Avg Spread", (data.spreadMean || 0).toFixed(4) + "%"));
+
+        // Evolution
+        var em = document.getElementById("evo-metrics");
+        clearChildren(em);
+        em.appendChild(metricRow("Generation", String(data.evoGeneration || "\u2014")));
+        em.appendChild(metricRow("Best Fitness", data.evoFitness ? data.evoFitness.toFixed(4) : "\u2014"));
+        em.appendChild(metricRow("Best Strategy", data.evoStrategy || "\u2014"));
+        em.appendChild(metricRow("Trend", data.evoImproving ? "\uD83D\uDCC8 Improving" : "\uD83D\uDCC9 Flat"));
+
+        // Strategies
+        var sg = document.getElementById("strategy-grid");
+        clearChildren(sg);
+        var breakdown = data.strategyBreakdown || {};
+        var keys = Object.keys(breakdown);
+        if (keys.length === 0) {
+          sg.appendChild(el("div", "empty-state", "No strategy data yet. Start paper trading."));
+        } else {
+          keys.forEach(function(name) {
+            var s = breakdown[name];
+            var chip = el("div", "strategy-chip");
+            chip.appendChild(el("div", "name", name.toUpperCase()));
+            var valEl = el("div", "value " + (s.pnl >= 0 ? "positive" : "negative"), "$" + s.pnl.toFixed(2));
+            chip.appendChild(valEl);
+            chip.appendChild(el("div", "name", s.trades + " trades | " + (s.winRate * 100).toFixed(0) + "% WR"));
+            sg.appendChild(chip);
+          });
+        }
+
+        // Recommendations
+        var recDiv = document.getElementById("recommendations");
+        clearChildren(recDiv);
+        var recs = data.recommendations || [];
+        if (recs.length === 0) {
+          recDiv.appendChild(el("div", "empty-state", "No recommendations yet."));
+        } else {
+          recs.forEach(function(r, i) {
+            var item = el("div", "rec-item");
+            var num = el("span", "rec-num", (i + 1) + ".");
+            item.appendChild(num);
+            item.appendChild(document.createTextNode(" " + r));
+            recDiv.appendChild(item);
+          });
+        }
+      });
+
+      // Exchanges
+      fetchJSON("/orderbooks/status", function(data) {
+        var list = document.getElementById("exchange-list");
+        clearChildren(list);
+        if (!data) {
+          list.appendChild(el("div", "empty-state", "Could not load exchange data."));
+          return;
+        }
+        var entries = (typeof data === "object" && !Array.isArray(data)) ? Object.entries(data) : [];
+        if (entries.length === 0) {
+          list.appendChild(el("div", "empty-state", "No exchange data available."));
+          return;
+        }
+        entries.forEach(function(entry) {
+          var name = entry[0];
+          var info = entry[1];
+          var bar = el("div", "exchange-bar");
+          bar.appendChild(el("div", "exchange-dot"));
+          bar.appendChild(el("span", "exchange-name", name));
+          var statusText = typeof info === "object" ? (info.symbols || "connected") : String(info);
+          bar.appendChild(el("span", "exchange-status", String(statusText)));
+          list.appendChild(bar);
+        });
+      });
+    }
+
+    document.getElementById("refresh-btn").addEventListener("click", loadDashboard);
+
+    // Initial load + auto-refresh
+    loadDashboard();
+    setInterval(loadDashboard, 30000);
+  </script>
+</body>
+</html>

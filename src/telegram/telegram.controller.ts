@@ -92,6 +92,7 @@ export class TelegramController {
       { command: 'evo_status', description: 'Evolution status and top brains' },
       { command: 'ai_report', description: 'AI daily analysis report' },
       { command: 'ai_regime', description: 'Current market regime' },
+      { command: 'dashboard', description: 'Open trading dashboard' },
       { command: 'advisor_start', description: 'Start AI trading advisor (free)' },
       { command: 'advisor_stop', description: 'Stop AI trading advisor' },
       { command: 'advisor_report', description: 'Get instant analysis report' },
@@ -111,6 +112,10 @@ export class TelegramController {
       console.log(chatId, messageText);
 
       if (messageText === "/start") {
+        const port = process.env.PORT || 8080;
+        const serverUrl = process.env.SERVER_URL || `http://localhost:${port}`;
+        const webAppUrl = `${serverUrl}/app/index.html`;
+
         const welcomeMsg =
 `╔══════════════════════════════════╗
 ║    🤖 CRYPTO ARBITRAGE BOT v2    ║
@@ -120,11 +125,11 @@ Welcome\\! I scan 5 exchanges for arbitrage opportunities using multiple strateg
 
 ━━━━━━━━ Quick Start ━━━━━━━━
 
+📊 /dashboard — Open trading dashboard
 ⚙️ /config — Configure exchanges \\& pairs
 📊 /paper\\_start — Start paper trading
 🧬 /evo\\_start — Start evolution engine
-🤖 /ai\\_report — AI market analysis
-🌊 /ai\\_regime — Market conditions
+🧠 /advisor\\_start — Start AI advisor \\(free\\)
 
 ━━━━━━━ Alert Modes ━━━━━━━━
 
@@ -134,9 +139,20 @@ Welcome\\! I scan 5 exchanges for arbitrage opportunities using multiple strateg
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 
+        const keyboard = {
+          inline_keyboard: [
+            [{ text: "📊 Open Dashboard", web_app: { url: webAppUrl } }],
+            [
+              { text: "▶️ Paper Trade", callback_data: "quick_paper_start" },
+              { text: "🧠 AI Advisor", callback_data: "quick_advisor_start" },
+            ],
+          ],
+        };
+
         await this.bot.sendMessage({
           chat_id: chatId,
           text: welcomeMsg,
+          reply_markup: keyboard,
           parse_mode: "MarkdownV2",
         });
       }
@@ -208,6 +224,11 @@ Welcome\\! I scan 5 exchanges for arbitrage opportunities using multiple strateg
       }
       if(messageText === "/advisor_report"){
         await this.handleAdvisorReport(chatId);
+      }
+
+      // ─── Dashboard Command ───
+      if(messageText === "/dashboard"){
+        await this.handleDashboard(chatId);
       }
 
       } catch (error) {
@@ -534,16 +555,41 @@ Welcome\\! I scan 5 exchanges for arbitrage opportunities using multiple strateg
   this.bot.on("callback_query", async(query)=>{
       const chatId = query?.from?.id;
       const data = query.data;
-      if(!data) return 
+      if(!data) return
       if(data.startsWith('transaction_')){
         try {
-            await this.transactions.getTransactionHistory(chatId);          
+            await this.transactions.getTransactionHistory(chatId);
         } catch (error) {
           console.error(`[Telegram controller] Error occured while fetching transaction history: ${error}`);
         }
-      }  
+      }
     }
   )
+
+    // ─── Quick Action Callbacks (Dashboard + Start) ───
+    this.bot.on("callback_query", async (query) => {
+      const chatId = query?.from?.id;
+      const data = query.data;
+      if (!data) return;
+
+      try {
+        if (data === "quick_paper_status") {
+          await this.handlePaperStatus(chatId);
+        } else if (data === "quick_evo_status") {
+          await this.handleEvoStatus(chatId);
+        } else if (data === "quick_advisor_report") {
+          await this.handleAdvisorReport(chatId);
+        } else if (data === "quick_regime") {
+          await this.handleAiRegime(chatId);
+        } else if (data === "quick_paper_start") {
+          await this.handlePaperStart(chatId);
+        } else if (data === "quick_advisor_start") {
+          await this.handleAdvisorStart(chatId);
+        }
+      } catch (err) {
+        console.error("[Telegram Controller] Quick action error:", err);
+      }
+    });
   }
 
   // ─── Paper Trading Handlers ────────────────────────────────
@@ -1098,6 +1144,42 @@ Use /advisor\\_start to resume\\.`,
         parse_mode: "MarkdownV2",
       });
     }
+  }
+
+  // ─── Dashboard Handler ─────────────────────────────────────
+
+  private async handleDashboard(chatId: number) {
+    const port = process.env.PORT || 8080;
+    const serverUrl = process.env.SERVER_URL || `http://localhost:${port}`;
+    const webAppUrl = `${serverUrl}/app/index.html`;
+
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: "📊 Open Dashboard", web_app: { url: webAppUrl } }],
+        [
+          { text: "📈 Paper Status", callback_data: "quick_paper_status" },
+          { text: "🧬 Evo Status", callback_data: "quick_evo_status" },
+        ],
+        [
+          { text: "🧠 Advisor Report", callback_data: "quick_advisor_report" },
+          { text: "🌊 Market Regime", callback_data: "quick_regime" },
+        ],
+      ],
+    };
+
+    const msg =
+`╔══════════════════════════════════╗
+║      📊 TRADING DASHBOARD        ║
+╚══════════════════════════════════╝
+
+Open the full interactive dashboard or use quick actions below\\.`;
+
+    await this.bot.sendMessage({
+      chat_id: chatId,
+      text: msg,
+      reply_markup: keyboard,
+      parse_mode: "MarkdownV2",
+    });
   }
 
   /** Escape MarkdownV2 special characters */
