@@ -11,7 +11,7 @@ export interface PopulationConfig {
   mutationRate: number;         // 0.1-0.3
   crossoverRate: number;        // 0.6-0.8
   tournamentSize: number;       // k for tournament selection (e.g., 3)
-  strategyType: string;         // "direct" or "triangular"
+  strategyType: string;         // "direct" | "triangular" | "altcoin" | "funding" | "statistical" | "mixed"
 }
 
 export interface GenerationReport {
@@ -40,11 +40,20 @@ export class Population {
 
   /** Initialize population with random chromosomes */
   async initialize(): Promise<void> {
-    logger.info(`[Population] Initializing ${this.config.populationSize} brains for ${this.config.strategyType}`);
+    const { populationSize, strategyType } = this.config;
+    logger.info(`[Population] Initializing ${populationSize} brains for ${strategyType}`);
 
+    const STRATEGY_TYPES = ["direct", "triangular", "altcoin", "statistical"];
     this.brains = [];
-    for (let i = 0; i < this.config.populationSize; i++) {
-      const chromosome = geneticOperators.randomChromosome(this.config.strategyType);
+
+    for (let i = 0; i < populationSize; i++) {
+      let type: string;
+      if (strategyType === "mixed") {
+        type = STRATEGY_TYPES[i % STRATEGY_TYPES.length];
+      } else {
+        type = strategyType;
+      }
+      const chromosome = geneticOperators.randomChromosome(type);
       const brain = new Brain(chromosome, this.realAdapters, this.allSymbols);
       this.brains.push(brain);
     }

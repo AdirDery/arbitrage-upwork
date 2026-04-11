@@ -3,6 +3,9 @@ import { FitnessMetrics, fitnessEvaluator } from "./Fitness";
 import { IStrategy } from "../strategy/IStrategy";
 import { DirectArbitrageStrategy } from "../strategy/implementations/DirectArbitrageStrategy";
 import { TriangularArbitrageStrategy } from "../strategy/implementations/TriangularArbitrageStrategy";
+import { AltcoinArbitrageStrategy, ALTCOIN_SYMBOLS } from "../strategy/implementations/AltcoinArbitrageStrategy";
+import { FundingRateStrategy } from "../strategy/implementations/FundingRateStrategy";
+import { StatisticalArbitrageStrategy } from "../strategy/implementations/StatisticalArbitrageStrategy";
 import { PaperTradingEngine } from "../paper/PaperTradingEngine";
 import { ExchangeAdapter } from "../arbitrage/arbitrage.types";
 import logger from "../core/logger.service";
@@ -82,6 +85,39 @@ export class Brain {
         allExchanges: paperAdapters as any,
         capital: config.capital || 200,
         profitThreshold: config.profitThreshold || 0.5,
+      });
+      this.strategy = strategy;
+    } else if (this.chromosome.strategyType === "altcoin") {
+      const strategy = new AltcoinArbitrageStrategy(this.id);
+      await strategy.initialize({
+        exchanges: activeExchanges,
+        symbols: ALTCOIN_SYMBOLS,
+        tradeSize: config.tradeSize || 50,
+        profitThreshold: config.profitThreshold || 0.3,
+        minSpreadPct: config.minSpreadPct || 0.3,
+      });
+      this.strategy = strategy;
+    } else if (this.chromosome.strategyType === "funding") {
+      const strategy = new FundingRateStrategy(this.id);
+      await strategy.initialize({
+        spotAdapters: paperAdapters as any,
+        futuresAdapters: {},
+        symbols: this.allSymbols,
+        minFundingRate: config.minFundingRate || 0.0003,
+        capitalPerPosition: config.capitalPerPosition || 500,
+        maxPositions: config.maxPositions || 3,
+        closeAfterReversals: config.closeAfterReversals || 2,
+      });
+      this.strategy = strategy;
+    } else if (this.chromosome.strategyType === "statistical") {
+      const strategy = new StatisticalArbitrageStrategy(this.id);
+      const exchangeName = Object.keys(paperAdapters)[0] || "Binance";
+      await strategy.initialize({
+        exchanges: activeExchanges,
+        tradeSize: config.tradeSize || 200,
+        zScoreThreshold: config.zScoreThreshold || 2.0,
+        minCorrelation: config.minCorrelation || 0.7,
+        exchange: exchangeName,
       });
       this.strategy = strategy;
     }

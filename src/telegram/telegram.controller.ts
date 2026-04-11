@@ -18,6 +18,10 @@ import { DirectArbitrageStrategy, DirectArbConfig } from "../strategy/implementa
 import { EvolutionEngine } from "../evolution/EvolutionEngine";
 import { ClaudeAnalysis } from "../ai/ClaudeAnalysis";
 import { marketRegimeDetector } from "../ai/MarketRegimeDetector";
+import { AltcoinArbitrageStrategy, ALTCOIN_SYMBOLS } from "../strategy/implementations/AltcoinArbitrageStrategy";
+import { TriangularArbitrageStrategy } from "../strategy/implementations/TriangularArbitrageStrategy";
+import { StatisticalArbitrageStrategy } from "../strategy/implementations/StatisticalArbitrageStrategy";
+import { IStrategy } from "../strategy/IStrategy";
 
 export class TelegramController {
   private service: TelegramService;
@@ -29,6 +33,7 @@ export class TelegramController {
   private allExchanges: Record<string, ExchangeAdapter>;
   private transactions: Transactions;
   private paperEngine: PaperTradingEngine | null = null;
+  private paperStrategies: IStrategy[] = [];
   private evolutionEngine: EvolutionEngine | null = null;
   private claudeAnalysis: ClaudeAnalysis;
   
@@ -102,9 +107,33 @@ export class TelegramController {
       console.log(chatId, messageText);
 
       if (messageText === "/start") {
-          await this.bot.sendMessage({
-            chat_id: chatId,
-            text: "Welcome to Arbitrarge bot.",
+        const welcomeMsg =
+`╔══════════════════════════════════╗
+║    🤖 CRYPTO ARBITRAGE BOT v2    ║
+╚══════════════════════════════════╝
+
+Welcome\\! I scan 5 exchanges for arbitrage opportunities using multiple strategies\\.
+
+━━━━━━━━ Quick Start ━━━━━━━━
+
+⚙️ /config — Configure exchanges \\& pairs
+📊 /paper\\_start — Start paper trading
+🧬 /evo\\_start — Start evolution engine
+🤖 /ai\\_report — AI market analysis
+🌊 /ai\\_regime — Market conditions
+
+━━━━━━━ Alert Modes ━━━━━━━━
+
+📈 /direct\\_alerts — Direct arb alerts
+🔺 /triangular\\_alerts — Triangular alerts
+📜 /transaction\\_history — Trade log
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+
+        await this.bot.sendMessage({
+          chat_id: chatId,
+          text: welcomeMsg,
+          parse_mode: "MarkdownV2",
         });
       }
 
@@ -507,9 +536,19 @@ export class TelegramController {
   private async handlePaperStart(chatId: number) {
     try {
       if (this.paperEngine) {
-        await this.bot.sendMessage({ chat_id: chatId, text: "Paper trading is already running. Use /paper_stop first." });
+        await this.bot.sendMessage({
+          chat_id: chatId,
+          text: "⚠️ Paper trading is already running\\. Use /paper\\_stop first\\.",
+          parse_mode: "MarkdownV2",
+        });
         return;
       }
+
+      await this.bot.sendMessage({
+        chat_id: chatId,
+        text: "⏳ *Initializing paper trading\\.\\.\\.*\n\nStarting all strategies with live market data\\.",
+        parse_mode: "MarkdownV2",
+      });
 
       // Create paper engine with $10K virtual capital per exchange
       const initialCapital: Record<string, Record<string, number>> = {};
@@ -518,8 +557,8 @@ export class TelegramController {
       }
 
       this.paperEngine = new PaperTradingEngine(this.allExchanges, { initialCapital });
+      this.paperStrategies = [];
 
-      // Create a direct arb strategy using paper adapters
       const user = await UserPreferences.findOne();
       const selectedSymbols = user?.selectedSymbols || ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
       const selectedExchangeNames = user?.selectedExchanges || Object.keys(this.allExchanges);
@@ -530,31 +569,89 @@ export class TelegramController {
         .map(name => paperAdapters[name])
         .filter(Boolean) as any[];
 
-      const strategy = new DirectArbitrageStrategy("paper_direct");
-      await strategy.initialize({
+      // Strategy 1: Direct Arbitrage
+      const directStrat = new DirectArbitrageStrategy("paper_direct");
+      await directStrat.initialize({
         exchanges,
         symbols: selectedSymbols,
         tradeSize: config?.directArbSize || 0.5,
         profitThreshold: config?.profitThreshold || 0.5,
       });
+      this.paperStrategies.push(directStrat);
 
-      // Start scanning
-      this.paperEngine.startStrategy(strategy, 2000);
+      // Strategy 2: Altcoin Arbitrage
+      const altcoinStrat = new AltcoinArbitrageStrategy("paper_altcoin");
+      await altcoinStrat.initialize({
+        exchanges,
+        symbols: ALTCOIN_SYMBOLS,
+        tradeSize: 50,
+        profitThreshold: 0.3,
+        minSpreadPct: 0.3,
+      });
+      this.paperStrategies.push(altcoinStrat);
+
+      // Strategy 3: Triangular Arbitrage
+      const triStrat = new TriangularArbitrageStrategy("paper_triangular");
+      await triStrat.initialize({
+        allExchanges: paperAdapters as any,
+        capital: config?.triangularArbSize || 200,
+        profitThreshold: config?.profitThreshold || 0.5,
+      });
+      this.paperStrategies.push(triStrat);
+
+      // Strategy 4: Statistical Arbitrage
+      const statStrat = new StatisticalArbitrageStrategy("paper_stat");
+      const firstExchange = selectedExchangeNames[0] || "Binance";
+      await statStrat.initialize({
+        exchanges,
+        tradeSize: 200,
+        zScoreThreshold: 2.0,
+        minCorrelation: 0.7,
+        exchange: firstExchange,
+      });
+      this.paperStrategies.push(statStrat);
+
+      // Start all strategies
+      for (const strategy of this.paperStrategies) {
+        this.paperEngine.startStrategy(strategy, 3000);
+      }
+
+      const msg =
+`╔══════════════════════════════════╗
+║     📊 PAPER TRADING STARTED     ║
+╚══════════════════════════════════╝
+
+💰 *Capital:* $10,000 per exchange
+🔄 *Scan Interval:* Every 3 seconds
+📡 *Exchanges:* ${selectedExchangeNames.length} connected
+
+━━━━━━ Active Strategies ━━━━━━
+
+📈 Direct Arbitrage
+🔺 Triangular Arbitrage
+🪙 Altcoin Arbitrage \\(${ALTCOIN_SYMBOLS.length} pairs\\)
+📊 Statistical Arbitrage
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 /paper\\_status — Check P\\&L
+🛑 /paper\\_stop — Stop trading
+🔄 /paper\\_reset — Reset balances`;
 
       await this.bot.sendMessage({
         chat_id: chatId,
-        text: `📊 *Paper Trading Started\\!*\n\n💰 Virtual Capital: \\$10,000 per exchange\n🔄 Scanning every 2 seconds\n📈 Strategy: Direct Arbitrage\n\nUse /paper\\_status to check P\\&L\nUse /paper\\_stop to stop`,
+        text: msg,
         parse_mode: "MarkdownV2",
       });
     } catch (error) {
       console.error(`[Telegram Controller] Paper start error:`, error);
-      await this.bot.sendMessage({ chat_id: chatId, text: "Error starting paper trading." });
+      await this.bot.sendMessage({ chat_id: chatId, text: "❌ Error starting paper trading\\.", parse_mode: "MarkdownV2" });
     }
   }
 
   private async handlePaperStop(chatId: number) {
     if (!this.paperEngine) {
-      await this.bot.sendMessage({ chat_id: chatId, text: "Paper trading is not running." });
+      await this.bot.sendMessage({ chat_id: chatId, text: "⚠️ Paper trading is not running\\.", parse_mode: "MarkdownV2" });
       return;
     }
 
@@ -562,44 +659,113 @@ export class TelegramController {
     await this.paperEngine.savePerformanceSnapshot();
 
     const results = this.paperEngine.getResults();
-    const pnlEmoji = results.totalPnL >= 0 ? "📈" : "📉";
+    const pnlSign = results.totalPnL >= 0 ? "+" : "";
+    const pnlEmoji = results.totalPnL >= 0 ? "🟢" : "🔴";
 
-    await this.bot.sendMessage({
-      chat_id: chatId,
-      text: `🛑 *Paper Trading Stopped*\n\n${pnlEmoji} Total P&L: $${results.totalPnL.toFixed(4)}\n📊 Trades: ${results.totalTrades}\n✅ Win Rate: ${(results.winRate * 100).toFixed(1)}%`,
-      parse_mode: "Markdown",
-    });
+    // Build strategy breakdown from trades
+    const stratBreakdown = new Map<string, { count: number; pnl: number }>();
+    for (const t of results.trades) {
+      const existing = stratBreakdown.get(t.strategyId) || { count: 0, pnl: 0 };
+      existing.count++;
+      existing.pnl += t.profit;
+      stratBreakdown.set(t.strategyId, existing);
+    }
 
+    let stratLines = "";
+    for (const [id, data] of stratBreakdown) {
+      const icon = data.pnl >= 0 ? "🟢" : "🔴";
+      const name = id.replace("paper_", "");
+      stratLines += `${icon} *${this.escMd(this.capitalize(name))}:* ${data.count} trades \\| $${this.escMd(data.pnl.toFixed(2))}\n`;
+    }
+    if (!stratLines) stratLines = "No trades executed\n";
+
+    const msg =
+`╔══════════════════════════════════╗
+║     🛑 PAPER TRADING STOPPED     ║
+╚══════════════════════════════════╝
+
+${pnlEmoji} *Total P&L:* $${this.escMd(pnlSign)}${this.escMd(results.totalPnL.toFixed(4))}
+📊 *Total Trades:* ${results.totalTrades}
+✅ *Win Rate:* ${this.escMd((results.winRate * 100).toFixed(1))}%
+
+━━━━━━ Strategy Breakdown ━━━━━━
+
+${stratLines}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+
+    await this.bot.sendMessage({ chat_id: chatId, text: msg, parse_mode: "MarkdownV2" });
     this.paperEngine = null;
+    this.paperStrategies = [];
   }
 
   private async handlePaperStatus(chatId: number) {
     if (!this.paperEngine) {
-      await this.bot.sendMessage({ chat_id: chatId, text: "Paper trading is not running. Use /paper_start" });
+      await this.bot.sendMessage({ chat_id: chatId, text: "⚠️ Paper trading is not running\\. Use /paper\\_start", parse_mode: "MarkdownV2" });
       return;
     }
 
     const results = this.paperEngine.getResults();
     const balances = results.balances;
-    const pnlEmoji = results.totalPnL >= 0 ? "📈" : "📉";
+    const pnlEmoji = results.totalPnL >= 0 ? "🟢" : "🔴";
+    const pnlSign = results.totalPnL >= 0 ? "+" : "";
 
-    let balanceText = "";
+    // Balance per exchange
+    let balanceLines = "";
     for (const [exchange, assets] of Object.entries(balances)) {
       const usdtBal = assets["USDT"] || 0;
-      balanceText += `  ${exchange}: $${usdtBal.toFixed(2)} USDT\n`;
+      const change = usdtBal - 10000;
+      const changeIcon = change >= 0 ? "▲" : "▼";
+      balanceLines += `  ${this.escMd(exchange)}: $${this.escMd(usdtBal.toFixed(2))} ${changeIcon}\n`;
     }
 
-    // Show last 5 trades
-    const recentTrades = results.trades.slice(-5).map((t, i) => {
+    // Strategy breakdown
+    const stratBreakdown = new Map<string, { count: number; pnl: number }>();
+    for (const t of results.trades) {
+      const existing = stratBreakdown.get(t.strategyId) || { count: 0, pnl: 0 };
+      existing.count++;
+      existing.pnl += t.profit;
+      stratBreakdown.set(t.strategyId, existing);
+    }
+
+    let stratLines = "";
+    for (const [id, data] of stratBreakdown) {
+      const icon = data.pnl >= 0 ? "🟢" : "🔴";
+      const name = id.replace("paper_", "");
+      stratLines += `  ${icon} ${this.escMd(this.capitalize(name))}: ${data.count} trades \\| $${this.escMd(data.pnl.toFixed(2))}\n`;
+    }
+    if (!stratLines) stratLines = "  No trades yet\\.\\.\\.\n";
+
+    // Recent trades
+    const recentTrades = results.trades.slice(-5).map(t => {
       const icon = t.profit > 0 ? "✅" : "❌";
-      return `  ${icon} $${t.profit.toFixed(4)} | ${t.legs.map(l => l.exchange).join("→")}`;
+      return `  ${icon} $${this.escMd(t.profit.toFixed(4))} \\| ${this.escMd(t.legs.map(l => l.exchange).join(" → "))}`;
     }).join("\n");
 
-    await this.bot.sendMessage({
-      chat_id: chatId,
-      text: `📊 *Paper Trading Status*\n\n${pnlEmoji} Total P&L: $${results.totalPnL.toFixed(4)}\n📊 Total Trades: ${results.totalTrades}\n✅ Win Rate: ${(results.winRate * 100).toFixed(1)}%\n\n💰 *Balances:*\n${balanceText}\n📝 *Recent Trades:*\n${recentTrades || "  No trades yet"}`,
-      parse_mode: "Markdown",
-    });
+    // Win rate bar
+    const barLength = 10;
+    const filled = Math.round(results.winRate * barLength);
+    const bar = "█".repeat(filled) + "░".repeat(barLength - filled);
+
+    const msg =
+`╔══════════════════════════════════╗
+║      📊 PAPER TRADING STATUS     ║
+╚══════════════════════════════════╝
+
+${pnlEmoji} *P&L:* $${this.escMd(pnlSign)}${this.escMd(results.totalPnL.toFixed(4))}
+📊 *Trades:* ${results.totalTrades}
+🎯 *Win Rate:* ${this.escMd(bar)} ${this.escMd((results.winRate * 100).toFixed(1))}%
+
+━━━━ Strategy Performance ━━━━
+
+${stratLines}
+━━━━━ Exchange Balances ━━━━━
+
+${balanceLines}
+━━━━━━ Recent Trades ━━━━━━
+
+${recentTrades || "  No trades yet"}`;
+
+    await this.bot.sendMessage({ chat_id: chatId, text: msg, parse_mode: "MarkdownV2" });
   }
 
   private async handlePaperReset(chatId: number) {
@@ -607,11 +773,21 @@ export class TelegramController {
       this.paperEngine.stop();
       await this.paperEngine.reset();
       this.paperEngine = null;
+      this.paperStrategies = [];
     }
 
     await this.bot.sendMessage({
       chat_id: chatId,
-      text: "🔄 Paper trading reset. Virtual balances restored to initial capital.\nUse /paper_start to begin again.",
+      text:
+`╔══════════════════════════════════╗
+║    🔄 PAPER TRADING RESET        ║
+╚══════════════════════════════════╝
+
+💰 Virtual balances restored to $10,000
+📊 Trade history cleared
+
+Use /paper\\_start to begin again\\.`,
+      parse_mode: "MarkdownV2",
     });
   }
 
@@ -620,7 +796,7 @@ export class TelegramController {
   private async handleEvoStart(chatId: number) {
     try {
       if (this.evolutionEngine) {
-        await this.bot.sendMessage({ chat_id: chatId, text: "Evolution is already running. Use /evo_stop first." });
+        await this.bot.sendMessage({ chat_id: chatId, text: "⚠️ Evolution is already running\\. Use /evo\\_stop first\\.", parse_mode: "MarkdownV2" });
         return;
       }
 
@@ -629,108 +805,155 @@ export class TelegramController {
 
       this.evolutionEngine = new EvolutionEngine(this.allExchanges, symbols);
       await this.evolutionEngine.start({
-        populationSize: 10,
+        populationSize: 12,
         eliteCount: 2,
         mutationRate: 0.2,
         crossoverRate: 0.7,
         tournamentSize: 3,
-        strategyType: "direct",
+        strategyType: "mixed",
       });
 
-      await this.bot.sendMessage({
-        chat_id: chatId,
-        text: `🧬 *Evolution Engine Started\\!*\n\n🧠 Population: 10 brains\n📊 Strategy: Direct Arbitrage\n⏱ Eval Period: 24 hours\n🏆 Elite: Top 2 survive each generation\n🔀 Mutation Rate: 20%\n\nUse /evo\\_status to monitor\nUse /evo\\_stop to stop`,
-        parse_mode: "MarkdownV2",
-      });
+      const msg =
+`╔══════════════════════════════════╗
+║   🧬 EVOLUTION ENGINE STARTED    ║
+╚══════════════════════════════════╝
+
+🧠 *Population:* 12 brains
+🔀 *Mode:* Mixed Strategies
+⏱ *Eval Period:* 24 hours
+🏆 *Elite:* Top 2 survive each generation
+
+━━━━━ Strategy Distribution ━━━━━
+
+📈 3x Direct Arbitrage
+🔺 3x Triangular Arbitrage
+🪙 3x Altcoin Arbitrage
+📊 3x Statistical Arbitrage
+
+━━━━━━━ Genetic Config ━━━━━━━
+
+🧬 Crossover Rate: 70%
+💥 Mutation Rate: 20%
+⚔️ Tournament Size: 3
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 /evo\\_status — View leaderboard
+🛑 /evo\\_stop — Stop evolution`;
+
+      await this.bot.sendMessage({ chat_id: chatId, text: msg, parse_mode: "MarkdownV2" });
     } catch (error) {
       console.error(`[Telegram Controller] Evolution start error:`, error);
-      await this.bot.sendMessage({ chat_id: chatId, text: "Error starting evolution engine." });
+      await this.bot.sendMessage({ chat_id: chatId, text: "❌ Error starting evolution engine\\.", parse_mode: "MarkdownV2" });
     }
   }
 
   private async handleEvoStop(chatId: number) {
     if (!this.evolutionEngine) {
-      await this.bot.sendMessage({ chat_id: chatId, text: "Evolution is not running." });
+      await this.bot.sendMessage({ chat_id: chatId, text: "⚠️ Evolution is not running\\.", parse_mode: "MarkdownV2" });
       return;
     }
 
     const report = await this.evolutionEngine.stop();
     const best = this.evolutionEngine.getBestBrainChromosome();
 
-    let msg = "🛑 *Evolution Stopped*\n\n";
+    let msg =
+`╔══════════════════════════════════╗
+║   🛑 EVOLUTION ENGINE STOPPED    ║
+╚══════════════════════════════════╝\n\n`;
 
     if (report) {
-      msg += `📊 Generation: ${report.generation}\n`;
-      msg += `🏆 Best Fitness: ${report.bestFitness.toFixed(4)}\n`;
-      msg += `📈 Avg Fitness: ${report.avgFitness.toFixed(4)}\n\n`;
+      msg += `📊 *Generation:* ${report.generation}\n`;
+      msg += `🏆 *Best Fitness:* ${this.escMd(report.bestFitness.toFixed(4))}\n`;
+      msg += `📈 *Avg Fitness:* ${this.escMd(report.avgFitness.toFixed(4))}\n\n`;
+      msg += `━━━━━ Top 5 Brains ━━━━━\n\n`;
 
-      msg += `*Top 5 Brains:*\n`;
-      for (const s of report.brainSummaries.slice(0, 5)) {
-        const icon = s.return >= 0 ? "🟢" : "🔴";
-        msg += `${icon} ${s.id.slice(0, 12)}... | Fit: ${s.fitness.toFixed(3)} | $${s.return.toFixed(2)} | ${s.trades} trades\n`;
+      for (let i = 0; i < Math.min(5, report.brainSummaries.length); i++) {
+        const s = report.brainSummaries[i];
+        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "  ";
+        const pnlIcon = s.return >= 0 ? "🟢" : "🔴";
+        msg += `${medal} ${pnlIcon} Fit: ${this.escMd(s.fitness.toFixed(3))} \\| $${this.escMd(s.return.toFixed(2))} \\| ${s.trades} trades\n`;
       }
     }
 
     if (best) {
-      msg += `\n🧬 *Best Brain Config:*\n`;
+      msg += `\n━━━━ 🏆 Best Brain Config ━━━━\n\n`;
+      msg += `🆔 ${this.escMd(best.id.slice(0, 20))}\n`;
       for (const gene of best.chromosome.genes) {
-        msg += `  ${gene.name}: ${gene.value}\n`;
+        msg += `  ${this.escMd(gene.name)}: ${this.escMd(String(gene.value))}\n`;
       }
     }
 
-    await this.bot.sendMessage({ chat_id: chatId, text: msg, parse_mode: "Markdown" });
+    await this.bot.sendMessage({ chat_id: chatId, text: msg, parse_mode: "MarkdownV2" });
     this.evolutionEngine = null;
   }
 
   private async handleEvoStatus(chatId: number) {
     if (!this.evolutionEngine) {
-      await this.bot.sendMessage({ chat_id: chatId, text: "Evolution is not running. Use /evo_start" });
+      await this.bot.sendMessage({ chat_id: chatId, text: "⚠️ Evolution is not running\\. Use /evo\\_start", parse_mode: "MarkdownV2" });
       return;
     }
 
     const status = this.evolutionEngine.getStatus();
 
-    let msg = `🧬 *Evolution Status*\n\n`;
-    msg += `🔄 Running: ${status.running ? "Yes" : "No"}\n`;
-    msg += `📊 Generation: ${status.generation}\n`;
-    msg += `🧠 Population: ${status.populationSize} brains\n\n`;
+    let msg =
+`╔══════════════════════════════════╗
+║      🧬 EVOLUTION STATUS         ║
+╚══════════════════════════════════╝
+
+🔄 *Running:* ${status.running ? "Yes ✅" : "No ❌"}
+📊 *Generation:* ${status.generation}
+🧠 *Population:* ${status.populationSize} brains
+
+━━━━━━ Top 5 Brains ━━━━━━\n\n`;
 
     if (status.topBrains.length > 0) {
-      msg += `*Top 5 Brains:*\n`;
-      for (const b of status.topBrains) {
-        msg += `  🧠 ${b.id.slice(0, 15)}... | Fitness: ${b.fitness.toFixed(4)} | Gen: ${b.generation}\n`;
+      for (let i = 0; i < status.topBrains.length; i++) {
+        const b = status.topBrains[i];
+        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `\\#${i + 1}`;
+        msg += `${medal} ${this.escMd(b.id.slice(0, 18))} \\| Fit: ${this.escMd(b.fitness.toFixed(4))} \\| Gen: ${b.generation}\n`;
       }
+    } else {
+      msg += `  Evaluating\\.\\.\\. waiting for first results\n`;
     }
 
     if (status.recentReports.length > 0) {
       const latest = status.recentReports[status.recentReports.length - 1];
-      msg += `\n*Latest Generation Report:*\n`;
-      msg += `  Best: ${latest.bestFitness.toFixed(4)} | Avg: ${latest.avgFitness.toFixed(4)}\n`;
+      msg += `\n━━━ Latest Generation Report ━━━\n\n`;
+      msg += `🏆 Best: ${this.escMd(latest.bestFitness.toFixed(4))} \\| Avg: ${this.escMd(latest.avgFitness.toFixed(4))}\n`;
     }
 
-    await this.bot.sendMessage({ chat_id: chatId, text: msg, parse_mode: "Markdown" });
+    await this.bot.sendMessage({ chat_id: chatId, text: msg, parse_mode: "MarkdownV2" });
   }
 
   // ─── AI Handlers ───────────────────────────────────────────
 
   private async handleAiReport(chatId: number) {
-    await this.bot.sendMessage({ chat_id: chatId, text: "🤖 Generating AI analysis report..." });
+    await this.bot.sendMessage({
+      chat_id: chatId,
+      text:
+`╔══════════════════════════════════╗
+║     🤖 AI ANALYSIS REPORT        ║
+╚══════════════════════════════════╝
+
+⏳ Generating report\\.\\.\\. this may take a moment\\.`,
+      parse_mode: "MarkdownV2",
+    });
 
     try {
       const report = await this.claudeAnalysis.generateDailyReport();
 
       // Split long messages (Telegram limit: 4096 chars)
-      const chunks = this.splitMessage(report, 4000);
+      const chunks = this.splitMessage(report, 3800);
       for (const chunk of chunks) {
         await this.bot.sendMessage({ chat_id: chatId, text: `🤖 *AI Analysis*\n\n${chunk}`, parse_mode: "Markdown" });
       }
     } catch (error) {
-      await this.bot.sendMessage({ chat_id: chatId, text: "Error generating AI report. Check CLAUDE_API_KEY in .env" });
+      await this.bot.sendMessage({ chat_id: chatId, text: "❌ Error generating AI report\\. Check CLAUDE\\_API\\_KEY in \\.env", parse_mode: "MarkdownV2" });
     }
   }
 
   private async handleAiRegime(chatId: number) {
-    // Record latest snapshot
     marketRegimeDetector.recordSnapshot();
 
     const analysis = marketRegimeDetector.detectRegime();
@@ -740,22 +963,43 @@ export class TelegramController {
       calm: "😌", volatile: "⚡", trending: "📈", choppy: "🌊"
     };
 
-    const msg = `${regimeEmoji[analysis.regime] || "📊"} *Market Regime: ${analysis.regime.toUpperCase()}*
+    const regimeIcon = regimeEmoji[analysis.regime] || "📊";
 
-📊 Confidence: ${(analysis.confidence * 100).toFixed(0)}%
-📉 Volatility: ${analysis.volatility.toFixed(1)}% (annualized)
-📏 Avg Spread: ${analysis.spreadMean.toFixed(4)}%
-📐 Spread StdDev: ${analysis.spreadStdDev.toFixed(4)}%
+    const msg =
+`╔══════════════════════════════════╗
+║     ${regimeIcon} MARKET REGIME              ║
+╚══════════════════════════════════╝
 
-💡 *Recommendation:*
-${analysis.recommendation}
+*Regime:* ${this.escMd(analysis.regime.toUpperCase())}
+*Confidence:* ${this.escMd((analysis.confidence * 100).toFixed(0))}%
 
-⚙️ *Parameter Adjustments:*
-  Profit Threshold: x${modifiers.profitThresholdMultiplier}
-  Trade Size: x${modifiers.tradeSizeMultiplier}
-  Scan Speed: x${modifiers.scanIntervalMultiplier}`;
+━━━━━━━ Market Data ━━━━━━━
 
-    await this.bot.sendMessage({ chat_id: chatId, text: msg, parse_mode: "Markdown" });
+📉 Volatility: ${this.escMd(analysis.volatility.toFixed(1))}% \\(annualized\\)
+📏 Avg Spread: ${this.escMd(analysis.spreadMean.toFixed(4))}%
+📐 Spread StdDev: ${this.escMd(analysis.spreadStdDev.toFixed(4))}%
+
+━━━━━━ Recommendation ━━━━━━
+
+💡 ${this.escMd(analysis.recommendation)}
+
+━━━━ Parameter Adjustments ━━━━
+
+  Profit Threshold: x${this.escMd(String(modifiers.profitThresholdMultiplier))}
+  Trade Size: x${this.escMd(String(modifiers.tradeSizeMultiplier))}
+  Scan Speed: x${this.escMd(String(modifiers.scanIntervalMultiplier))}`;
+
+    await this.bot.sendMessage({ chat_id: chatId, text: msg, parse_mode: "MarkdownV2" });
+  }
+
+  /** Escape MarkdownV2 special characters */
+  private escMd(text: string): string {
+    return text.replace(/([_*[\]()~`>#+=|{}.!-])/g, '\\$1');
+  }
+
+  /** Capitalize first letter */
+  private capitalize(text: string): string {
+    return text.charAt(0).toUpperCase() + text.slice(1);
   }
 
   private splitMessage(text: string, maxLength: number): string[] {

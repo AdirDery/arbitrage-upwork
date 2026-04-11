@@ -1,4 +1,4 @@
-import { Chromosome, Gene, snapToStep, DIRECT_ARB_GENES, TRIANGULAR_ARB_GENES } from "./Chromosome";
+import { Chromosome, Gene, snapToStep, STRATEGY_GENES } from "./Chromosome";
 
 /**
  * Core genetic algorithm operators: selection, crossover, mutation.
@@ -88,7 +88,10 @@ export class GeneticOperators {
    * Generate a random chromosome for the initial population.
    */
   randomChromosome(strategyType: string): Chromosome {
-    const templates = strategyType === "direct" ? DIRECT_ARB_GENES : TRIANGULAR_ARB_GENES;
+    const templates = STRATEGY_GENES[strategyType];
+    if (!templates) {
+      throw new Error(`Unknown strategy type: ${strategyType}. Valid: ${Object.keys(STRATEGY_GENES).join(", ")}`);
+    }
 
     const genes: Gene[] = templates.map(template => {
       const range = template.max - template.min;
