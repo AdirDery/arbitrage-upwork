@@ -22,6 +22,7 @@ import { AltcoinArbitrageStrategy, ALTCOIN_SYMBOLS } from "../strategy/implement
 import { TriangularArbitrageStrategy } from "../strategy/implementations/TriangularArbitrageStrategy";
 import { StatisticalArbitrageStrategy } from "../strategy/implementations/StatisticalArbitrageStrategy";
 import { IStrategy } from "../strategy/IStrategy";
+import { tradingAdvisor } from "../ai/TradingAdvisor";
 
 export class TelegramController {
   private service: TelegramService;
@@ -91,6 +92,9 @@ export class TelegramController {
       { command: 'evo_status', description: 'Evolution status and top brains' },
       { command: 'ai_report', description: 'AI daily analysis report' },
       { command: 'ai_regime', description: 'Current market regime' },
+      { command: 'advisor_start', description: 'Start AI trading advisor (free)' },
+      { command: 'advisor_stop', description: 'Stop AI trading advisor' },
+      { command: 'advisor_report', description: 'Get instant analysis report' },
     ]
   }); 
   console.log(`Telegram commands set successfully.`);
@@ -193,6 +197,17 @@ Welcome\\! I scan 5 exchanges for arbitrage opportunities using multiple strateg
       }
       if(messageText === "/ai_regime"){
         await this.handleAiRegime(chatId);
+      }
+
+      // ─── Advisor Commands ───
+      if(messageText === "/advisor_start"){
+        await this.handleAdvisorStart(chatId);
+      }
+      if(messageText === "/advisor_stop"){
+        await this.handleAdvisorStop(chatId);
+      }
+      if(messageText === "/advisor_report"){
+        await this.handleAdvisorReport(chatId);
       }
 
       } catch (error) {
@@ -990,6 +1005,99 @@ Use /paper\\_start to begin again\\.`,
   Scan Speed: x${this.escMd(String(modifiers.scanIntervalMultiplier))}`;
 
     await this.bot.sendMessage({ chat_id: chatId, text: msg, parse_mode: "MarkdownV2" });
+  }
+
+  // ─── Advisor Handlers ──────────────────────────────────────
+
+  private async handleAdvisorStart(chatId: number) {
+    try {
+      const status = tradingAdvisor.getStatus();
+      if (status.running) {
+        await this.bot.sendMessage({
+          chat_id: chatId,
+          text: "⚠️ Advisor already running\\. Use /advisor\\_stop first\\.",
+          parse_mode: "MarkdownV2",
+        });
+        return;
+      }
+
+      await tradingAdvisor.start(this.bot, chatId);
+
+      const msg =
+`╔══════════════════════════════════╗
+║   🧠 TRADING ADVISOR STARTED     ║
+╚══════════════════════════════════╝
+
+💰 *Cost:* FREE \\(no API calls\\)
+🔍 All analysis is local \\+ rule\\-based
+
+━━━━━━━ Monitoring ━━━━━━━━
+
+🔍 Every 5 min: regime, spreads, signals
+⏰ Hourly: performance snapshot
+📋 Every 6h: deep analysis \\+ recommendations
+
+━━━━━━━━ Alerts ━━━━━━━━━━
+
+🔄 Market regime changes
+📊 Strong stat arb divergences
+⚠️ Low performance warnings
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 /advisor\\_report — Instant analysis
+🛑 /advisor\\_stop — Stop advisor`;
+
+      await this.bot.sendMessage({ chat_id: chatId, text: msg, parse_mode: "MarkdownV2" });
+    } catch (error) {
+      console.error("[Telegram Controller] Advisor start error:", error);
+      await this.bot.sendMessage({ chat_id: chatId, text: "❌ Error starting advisor\\.", parse_mode: "MarkdownV2" });
+    }
+  }
+
+  private async handleAdvisorStop(chatId: number) {
+    const status = tradingAdvisor.getStatus();
+    if (!status.running) {
+      await this.bot.sendMessage({
+        chat_id: chatId,
+        text: "⚠️ Advisor is not running\\.",
+        parse_mode: "MarkdownV2",
+      });
+      return;
+    }
+
+    tradingAdvisor.stop();
+
+    const uptimeH = status.uptimeHours.toFixed(1);
+    await this.bot.sendMessage({
+      chat_id: chatId,
+      text:
+`╔══════════════════════════════════╗
+║   🛑 TRADING ADVISOR STOPPED     ║
+╚══════════════════════════════════╝
+
+⏱ Uptime: ${this.escMd(uptimeH)} hours
+Use /advisor\\_start to resume\\.`,
+      parse_mode: "MarkdownV2",
+    });
+  }
+
+  private async handleAdvisorReport(chatId: number) {
+    await this.bot.sendMessage({
+      chat_id: chatId,
+      text: "⏳ Analyzing\\.\\.\\. \\(local computation, no API cost\\)",
+      parse_mode: "MarkdownV2",
+    });
+
+    try {
+      await tradingAdvisor.triggerReport(this.bot, chatId);
+    } catch (error) {
+      await this.bot.sendMessage({
+        chat_id: chatId,
+        text: "❌ Error generating report\\.",
+        parse_mode: "MarkdownV2",
+      });
+    }
   }
 
   /** Escape MarkdownV2 special characters */
