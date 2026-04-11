@@ -23,6 +23,8 @@ import { TriangularArbitrageStrategy } from "../strategy/implementations/Triangu
 import { StatisticalArbitrageStrategy } from "../strategy/implementations/StatisticalArbitrageStrategy";
 import { IStrategy } from "../strategy/IStrategy";
 import { tradingAdvisor } from "../ai/TradingAdvisor";
+import { riskManager } from "../risk/RiskManager";
+import { riskBrain } from "../risk/RiskBrain";
 
 export class TelegramController {
   private service: TelegramService;
@@ -96,6 +98,8 @@ export class TelegramController {
       { command: 'advisor_start', description: 'Start AI trading advisor (free)' },
       { command: 'advisor_stop', description: 'Stop AI trading advisor' },
       { command: 'advisor_report', description: 'Get instant analysis report' },
+      { command: 'risk_status', description: 'Risk management report' },
+      { command: 'risk_reset', description: 'Resume trading after halt' },
     ]
   }); 
   console.log(`Telegram commands set successfully.`);
@@ -224,6 +228,14 @@ Welcome\\! I scan 5 exchanges for arbitrage opportunities using multiple strateg
       }
       if(messageText === "/advisor_report"){
         await this.handleAdvisorReport(chatId);
+      }
+
+      // ─── Risk Commands ───
+      if(messageText === "/risk_status"){
+        await this.handleRiskStatus(chatId);
+      }
+      if(messageText === "/risk_reset"){
+        await this.handleRiskReset(chatId);
       }
 
       // ─── Dashboard Command ───
@@ -1068,6 +1080,7 @@ Use /paper\\_start to begin again\\.`,
       }
 
       await tradingAdvisor.start(this.bot, chatId);
+      await riskManager.start(this.bot, chatId);
 
       const msg =
 `╔══════════════════════════════════╗
@@ -1112,6 +1125,7 @@ Use /paper\\_start to begin again\\.`,
       return;
     }
 
+    riskManager.stop();
     tradingAdvisor.stop();
 
     const uptimeH = status.uptimeHours.toFixed(1);
@@ -1141,6 +1155,58 @@ Use /advisor\\_start to resume\\.`,
       await this.bot.sendMessage({
         chat_id: chatId,
         text: "❌ Error generating report\\.",
+        parse_mode: "MarkdownV2",
+      });
+    }
+  }
+
+  // ─── Risk Management Handlers ──────────────────────────────
+
+  private async handleRiskStatus(chatId: number) {
+    await this.bot.sendMessage({
+      chat_id: chatId,
+      text: "⏳ Loading risk report\\.\\.\\.",
+      parse_mode: "MarkdownV2",
+    });
+
+    try {
+      await riskManager.triggerReport(this.bot, chatId);
+    } catch (error) {
+      await this.bot.sendMessage({
+        chat_id: chatId,
+        text: "❌ Error loading risk status\\.",
+        parse_mode: "MarkdownV2",
+      });
+    }
+  }
+
+  private async handleRiskReset(chatId: number) {
+    try {
+      await riskBrain.initialize();
+      await riskBrain.resumeTrading("Manual reset by user via /risk_reset");
+
+      await this.bot.sendMessage({
+        chat_id: chatId,
+        text:
+`╔══════════════════════════════════╗
+║    ✅ TRADING RESUMED             ║
+╚══════════════════════════════════╝
+
+Circuit breaker reset\\. Trading is now active\\.
+Consecutive loss counter reset to 0\\.
+
+⚠️ Risk limits still apply:
+  \\- Daily loss limit
+  \\- Max trade size
+  \\- Losing streak limit
+
+Use /risk\\_status to check current risk state\\.`,
+        parse_mode: "MarkdownV2",
+      });
+    } catch (error) {
+      await this.bot.sendMessage({
+        chat_id: chatId,
+        text: "❌ Error resetting risk state\\.",
         parse_mode: "MarkdownV2",
       });
     }
