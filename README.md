@@ -1,6 +1,6 @@
 # Crypto Arbitrage Bot v2
 
-Multi-exchange crypto arbitrage system with 5 trading strategies, genetic algorithm optimization, AI-powered market analysis, and paper trading — all controlled via Telegram.
+Multi-exchange crypto arbitrage system with 5 trading strategies, genetic algorithm optimization, autonomous AI advisor, risk management, Telegram Mini App dashboard, and paper trading — all controlled via Telegram.
 
 ## Supported Exchanges
 
@@ -37,8 +37,10 @@ Mean-reversion pairs trading on correlated assets. Opens positions when z-score 
 src/
 ├── adapters/              # Normalized exchange interface (ExchangeAdapter)
 │   └── futures/           # Perpetual futures adapters (IFuturesAdapter)
-├── ai/                    # Claude API analysis + ML scoring
-│   ├── ClaudeAnalysis     #   Daily AI market reports
+├── ai/                    # AI advisor + market analysis (zero cost)
+│   ├── TradingAdvisor     #   Autonomous monitor — hourly/6h reports to Telegram
+│   ├── AdvisorBrain       #   Persistent brain — learns from trade history
+│   ├── ClaudeAnalysis     #   Optional: Claude API reports (costs money)
 │   ├── OpportunityScorer  #   Logistic regression profitability prediction
 │   ├── MarketRegimeDetector #  Calm / volatile / trending / choppy classification
 │   └── CorrelationTracker #   Pairs correlation + z-score signals
@@ -46,9 +48,9 @@ src/
 ├── config/                # MongoDB config + user preferences
 ├── core/                  # App bootstrap, database, logger (Winston)
 ├── evolution/             # Genetic algorithm optimization
-│   ├── Chromosome         #   Gene encoding for strategy parameters
+│   ├── Chromosome         #   Gene encoding (5 strategy types)
 │   ├── Brain              #   Chromosome + strategy + paper engine
-│   ├── Population         #   10-20 concurrent brains, elite preservation
+│   ├── Population         #   12 mixed-strategy brains, elite preservation
 │   ├── EvolutionEngine    #   Full evolution loop with persistence
 │   ├── Fitness            #   Sharpe ratio, profit factor, max drawdown
 │   └── GeneticOperators   #   Tournament selection, crossover, mutation
@@ -59,41 +61,90 @@ src/
 │   ├── PaperExchangeAdapter # Wraps real adapters with simulated execution
 │   ├── PaperLedger        #   Virtual balance tracking (MongoDB)
 │   └── OrderSimulator     #   Realistic fills against live orderbooks
+├── public/                # Telegram Mini App dashboard (HTML/CSS/JS)
+├── risk/                  # Risk management system
+│   ├── RiskManager        #   Trade guardian — pre/post trade checks
+│   ├── RiskBrain          #   Tracks P&L, drawdown, streaks, circuit breakers
+│   └── risk.model         #   MongoDB: RiskConfig, DailyRiskRecord, RiskEvent
 ├── strategy/              # IStrategy interface + StrategyRegistry
 │   └── implementations/   #   All 5 strategy implementations
 ├── telegram/              # Telegram bot UI (commands, alerts, handlers)
 ├── transactions/          # Transaction model (mode: 'live' | 'paper')
-└── main.ts                # Entry point
+└── main.ts                # Entry point + dashboard API
 ```
 
 ## Key Systems
 
 **WebSocket Orderbooks** — The `OrderbookManager` maintains real-time orderbooks for all 5 exchanges via WebSocket with auto-reconnect and keepalive. In-memory reads (0ms latency) with REST fallback if WebSocket data goes stale.
 
-**Paper Trading** — Full simulation engine using real market data with virtual execution. Paper mode wraps real exchange adapters so you test strategies against live orderbooks without risking capital.
+**Paper Trading** — Launches all 4 strategies simultaneously (Direct, Altcoin, Triangular, Statistical) with $10K virtual capital per exchange. Real market data, simulated execution.
 
-**Genetic Evolution** — Runs 10-20 "brains" in parallel, each with different strategy parameters. A genetic algorithm evolves the population over generations using tournament selection, crossover, and mutation. Fitness is measured by Sharpe ratio, profit factor, and max drawdown.
+**Genetic Evolution** — Runs 12 mixed-strategy brains in parallel. Each brain has different strategy parameters encoded in a chromosome. A genetic algorithm evolves the population over 24h evaluation cycles using tournament selection, crossover, and mutation.
 
-**AI Analysis** — Claude API generates daily market reports, opportunity analysis, and parameter suggestions. A market regime detector classifies conditions (calm/volatile/trending/choppy) and adjusts strategy parameters accordingly.
+**AI Trading Advisor (Zero Cost)** — Autonomous agent that monitors market regime, strategy performance, correlation signals, and evolution progress. Sends hourly snapshots, 6-hour deep analysis reports, and instant alerts to Telegram. All rule-based — no API calls.
+
+**Risk Management** — Every trade passes through the RiskManager before execution. Circuit breakers halt trading on: daily loss > $50, 5 consecutive losses, or oversized trades. Auto-resumes after 1h cooldown. Reports every 4 hours with loss meter, weekly summary, and recommendations.
+
+**Telegram Mini App** — Interactive HTML dashboard that opens inside Telegram. Shows real-time P&L, strategy breakdown, exchange status, and AI recommendations. Served by the Express server at `/app/index.html`.
 
 ## Telegram Commands
 
+### Core
 | Command | Description |
 |---------|-------------|
-| `/start` | Initialize bot |
-| `/config` | View/edit configuration |
-| `/direct_alerts` | Toggle direct arbitrage alerts |
-| `/triangular_alerts` | Toggle triangular arbitrage alerts |
+| `/start` | Initialize bot with quick-start buttons |
+| `/config` | Configure exchanges, pairs, and parameters |
+| `/dashboard` | Open Mini App dashboard |
 | `/transaction_history` | View trade history |
-| `/paper_start` | Start paper trading |
-| `/paper_stop` | Stop paper trading |
-| `/paper_status` | View paper trading P&L |
-| `/paper_reset` | Reset paper balances |
-| `/evo_start` | Start evolution engine |
-| `/evo_stop` | Stop evolution |
-| `/evo_status` | View brain leaderboard |
-| `/ai_report` | Generate AI market report |
-| `/ai_regime` | View current market regime |
+
+### Paper Trading
+| Command | Description |
+|---------|-------------|
+| `/paper_start` | Start paper trading (all 4 strategies) |
+| `/paper_stop` | Stop paper trading + show results |
+| `/paper_status` | P&L, strategy breakdown, win rate bar |
+| `/paper_reset` | Reset virtual balances |
+
+### Evolution
+| Command | Description |
+|---------|-------------|
+| `/evo_start` | Start 12 mixed-strategy brains |
+| `/evo_stop` | Stop + show top brains with medals |
+| `/evo_status` | Leaderboard + generation report |
+
+### AI Advisor
+| Command | Description |
+|---------|-------------|
+| `/advisor_start` | Start autonomous advisor + risk manager |
+| `/advisor_stop` | Stop advisor and risk manager |
+| `/advisor_report` | Instant deep analysis report |
+
+### Risk Management
+| Command | Description |
+|---------|-------------|
+| `/risk_status` | Risk report with loss meter + weekly summary |
+| `/risk_reset` | Resume trading after circuit breaker halt |
+
+### Alerts
+| Command | Description |
+|---------|-------------|
+| `/direct_alerts` | Direct arbitrage opportunity alerts |
+| `/triangular_alerts` | Triangular arbitrage alerts |
+| `/ai_report` | Claude API market analysis (optional, costs money) |
+| `/ai_regime` | Current market regime classification |
+
+## Risk Limits (Default)
+
+| Limit | Value | Purpose |
+|-------|-------|---------|
+| Max daily loss | $50 | 5% of $1K capital |
+| Max consecutive losses | 5 | Stop losing streaks |
+| Max trade size | $100 | No single big bet |
+| Max portfolio risk/trade | 5% | Position sizing |
+| Max daily trades | 100 | Prevent overtrading |
+| Cooldown after halt | 60 min | Auto-resume period |
+
+All limits are configurable via MongoDB (`riskconfigs` collection).
 
 ## Quick Start
 
@@ -144,6 +195,8 @@ npm run lint   # Run ESLint
 | `BINGX_API_KEY` / `BINGX_SECRET` | BingX credentials |
 | `MEXC_API_KEY` / `MEXC_SECRET` | MEXC credentials |
 | `BOT_TOKEN` | Telegram bot token |
+| `SERVER_URL` | HTTPS URL for Telegram Mini App (use cloudflared or ngrok) |
+| `CLAUDE_API_KEY` | Optional: Anthropic API key for `/ai_report` |
 | `SLIPPAGE_PERCENT` | Max slippage tolerance |
 | `DIRECT_ARB_SIZE` | Trade size for direct arbitrage |
 | `TRIANGULAR_ARB_SIZE` | Trade size for triangular arbitrage (USDT) |
@@ -156,15 +209,25 @@ npm run lint   # Run ESLint
 - **Database:** MongoDB (Mongoose)
 - **Real-time:** WebSocket (ws)
 - **Exchanges:** Binance SDK, bybit-api, okx-api, mexc-api-sdk
-- **AI:** Anthropic Claude API
-- **ML:** simple-statistics (regression, z-scores)
-- **Bot UI:** Telegram Bot API
+- **AI:** Rule-based advisor (zero cost) + optional Claude API
+- **ML:** simple-statistics (regression, z-scores, correlation)
+- **Bot UI:** Telegram Bot API + Telegram Mini App (Web App)
 - **Logging:** Winston + daily rotate
+
+## API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Health check |
+| `GET /orderbooks/status` | WebSocket orderbook connection status |
+| `GET /api/dashboard` | Full dashboard data (P&L, strategies, regime, evolution) |
+| `GET /app/index.html` | Telegram Mini App dashboard |
 
 ## Recommended Workflow
 
-1. **Configure** — Set up API keys and connect via Telegram
-2. **Paper trade** — Run `/paper_start` to test strategies with virtual capital
-3. **Evolve** — Run `/evo_start` to let the genetic algorithm find optimal parameters
-4. **Analyze** — Use `/ai_report` and `/ai_regime` for market context
-5. **Go live** — Graduate the best-performing brain to live trading
+1. **Configure** — Set up API keys and connect via Telegram (`/config`)
+2. **Start advisor** — Run `/advisor_start` to begin monitoring + risk management
+3. **Paper trade** — Run `/paper_start` to test all strategies with virtual capital
+4. **Evolve** — Run `/evo_start` to let the genetic algorithm find optimal parameters
+5. **Monitor** — Check `/dashboard`, `/risk_status`, `/advisor_report` regularly
+6. **Go live** — Graduate the best-performing brain to live trading
